@@ -6,6 +6,6 @@ ANNOTATE=yes
 
 #INCDIRS=../lib
 #LIBS=lens
-PACKS=unix lwt lwt.unix
+PACKS=unix lwt lwt.unix value
 
 -include $(OCAMLMAKEFILE)

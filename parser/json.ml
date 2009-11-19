@@ -1,5 +1,6 @@
 (*
  * Copyright (C) 2006-2009 Citrix Systems Inc.
+ * Copyright (C) 2009 Anil Madhavapeddy <anil@recoil.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published
@@ -11,6 +12,8 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Lesser General Public License for more details.
  *)
+
+open Value
 
 let rec list_iter_between f o = function
   | []   -> ()
@@ -41,18 +44,18 @@ let escape_string s =
 
 let rec to_fct t f =
   match t with
-  | `Int i                -> f (Printf.sprintf "%Ld" i)
-  | `Bool b               -> f (string_of_bool b)
-  | `Float r              -> f (Printf.sprintf "%f" r)
-  | `String s             -> f (escape_string s)
-  | `None                 -> f "null"
-  | `List a               ->
+  | Int i                -> f (Printf.sprintf "%Ld" i)
+  | Bool b               -> f (string_of_bool b)
+  | Float r              -> f (Printf.sprintf "%f" r)
+  | String s             -> f (escape_string s)
+  | Null                 -> f "null"
+  | Enum a | Tuple a     ->
     f "[";
     list_iter_between (fun i -> to_fct i f) (fun () -> f ", ") a;
     f "]";
-  | `Dict a               ->
+  | Dict a               ->
     f "{";
-    list_iter_between (fun (k, v) -> to_fct (`String k) f; f ": "; to_fct v f)
+    list_iter_between (fun (k, v) -> to_fct (String k) f; f ": "; to_fct v f)
                       (fun () -> f ", ") a;
     f "}"
 
@@ -63,8 +66,6 @@ let to_string t =
   let buf = Buffer.create 2048 in
   to_buffer t buf;
   Buffer.contents buf
-
-
 
 type error =
   | Unexpected_char of int * char * (* json type *) string
@@ -94,13 +95,13 @@ module Parser = struct
     | Expect_object_elem_colon
     | Expect_comma_or_end
     | Expect_object_key
-    | Done of Rpc.Val.t
+    | Done of Value.t
 
   type int_value =
-    | IObject of (string * Rpc.Val.t) list
-    | IObject_needs_key of (string * Rpc.Val.t) list
-    | IObject_needs_value of (string * Rpc.Val.t) list * string
-    | IArray of Rpc.Val.t list
+    | IObject of (string * Value.t) list
+    | IObject_needs_key of (string * Value.t) list
+    | IObject_needs_value of (string * Value.t) list * string
+    | IArray of Value.t list
 
   type parse_state = {
     mutable cursor: cursor;
@@ -197,7 +198,7 @@ module Parser = struct
   let finish_value s v =
     match s.stack, v with
     | [], _ -> s.cursor <- Done v
-    | IObject_needs_key fields :: tl, `String key ->
+    | IObject_needs_key fields :: tl, String key ->
       s.stack <- IObject_needs_value (fields, key) :: tl;
       s.cursor <- Expect_object_elem_colon
     | IObject_needs_value (fields, key) :: tl, _ ->
@@ -211,8 +212,8 @@ module Parser = struct
 
   let pop_stack s =
     match s.stack with
-    | IObject fields :: tl -> s.stack <- tl; finish_value s (`Dict (List.rev fields))
-    | IArray l :: tl       -> s.stack <- tl; finish_value s (`List (List.rev l))
+    | IObject fields :: tl -> s.stack <- tl; finish_value s (Dict (List.rev fields))
+    | IArray l :: tl       -> s.stack <- tl; finish_value s (Enum (List.rev l))
     | io :: tl             -> raise_internal_error s ("unexpected " ^ (ivalue_to_str io) ^ " on stack at pop_stack")
     | []                   -> raise_internal_error s "empty stack at pop_stack"
 
@@ -231,7 +232,7 @@ module Parser = struct
       let str = tostring_with_leading_zero_check is in
       let int = try Int64.of_string str
       with Failure _ -> raise_invalid_value s str "int" in
-      finish_value s (`Int int) in
+      finish_value s (Int int) in
     let finish_int_exp is es =
       let int = tostring_with_leading_zero_check is in
       let exp = clist_to_string (List.rev es) in
@@ -241,14 +242,14 @@ module Parser = struct
            returning float is more uniform. *)
       let float = try float_of_string str
       with Failure _ -> raise_invalid_value s str "float" in
-      finish_value s (`Float float) in
+      finish_value s (Float float) in
     let finish_float is fs =
       let int = tostring_with_leading_zero_check is in
       let frac = clist_to_string (List.rev fs) in
       let str = Printf.sprintf "%s.%s" int frac in
       let float = try float_of_string str
       with Failure _ -> raise_invalid_value s str "float" in
-      finish_value s (`Float float) in
+      finish_value s (Float float) in
     let finish_float_exp is fs es =
       let int = tostring_with_leading_zero_check is in
       let frac = clist_to_string (List.rev fs) in
@@ -256,7 +257,7 @@ module Parser = struct
       let str = Printf.sprintf "%s.%se%s" int frac exp in
       let float = try float_of_string str
       with Failure _ -> raise_invalid_value s str "float" in
-      finish_value s (`Float float) in
+      finish_value s (Float float) in
 
     match s.cursor with
     | Start ->
@@ -288,14 +289,14 @@ module Parser = struct
       (match c, rem with
       | 'u', 3 -> s.cursor <- In_null 2
       | 'l', 2 -> s.cursor <- In_null 1
-      | 'l', 1 -> finish_value s `None
+      | 'l', 1 -> finish_value s Null
       | _ -> raise_unexpected_char s c "null")
 
     | In_true rem ->
       (match c, rem with
       | 'r', 3 -> s.cursor <- In_true 2
       | 'u', 2 -> s.cursor <- In_true 1
-      | 'e', 1 -> finish_value s (`Bool true)
+      | 'e', 1 -> finish_value s (Bool true)
       | _ -> raise_unexpected_char s c "true")
 
     | In_false rem ->
@@ -303,7 +304,7 @@ module Parser = struct
       | 'a', 4 -> s.cursor <- In_false 3
       | 'l', 3 -> s.cursor <- In_false 2
       | 's', 2 -> s.cursor <- In_false 1
-      | 'e', 1 -> finish_value s (`Bool false)
+      | 'e', 1 -> finish_value s (Bool false)
       | _ -> raise_unexpected_char s c "false")
 
     | In_int is ->
@@ -340,7 +341,7 @@ module Parser = struct
     | In_string cs ->
       (match c with
       | '\\' -> s.cursor <- In_string_control cs
-      | '"' -> finish_value s (`String (clist_to_string (List.rev cs)))
+      | '"' -> finish_value s (String (clist_to_string (List.rev cs)))
       | _ when is_valid_unescaped_char c -> s.cursor <- In_string (c :: cs)
       | _ ->  raise_unexpected_char s c "string")
       
@@ -369,7 +370,7 @@ module Parser = struct
     | Expect_object_elem_start ->
       (match c with
       | '"' -> s.stack <- (IObject_needs_key []) :: s.stack; s.cursor <- In_string []
-      | '}' -> finish_value s (`Dict [])
+      | '}' -> finish_value s (Dict [])
       | _ when is_space c -> update_line_num s c
       | _ -> raise_unexpected_char s c "object_start")
 
@@ -404,7 +405,7 @@ module Parser = struct
     | Done _ -> raise_internal_error s "parse called when parse_state is 'Done'"
 
   type parse_result =
-    | Json_value of Rpc.Val.t * (* number of consumed bytes *) int
+    | Json_value of Value.t * (* number of consumed bytes *) int
     | Json_parse_incomplete of parse_state
 
   let parse_substring state str ofs len =
