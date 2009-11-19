@@ -51,8 +51,8 @@ let read_at_least ~sz env =
       fn (acc + r) in
   fn 0
 
-(* create a stream from the buffer *)
-let stream env =
+(* create a character stream from the buffer *)
+let char_stream env =
   let buf = ref env.e_head in
   let posr = ref 0 in
   Lwt_stream.from (fun () ->
@@ -90,4 +90,3 @@ let stream env =
        end  
     end
   )
-

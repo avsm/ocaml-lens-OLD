@@ -1,10 +1,10 @@
 OCAMLMAKEFILE=../OCamlMakefile
 
-SOURCES=lens.ml lens_unix.ml
+SOURCES=lens.ml 
 RESULT=lens
 PACKS=lwt lwt.unix
 ANNOTATE=yes
 
-all: dnc
+all: ncl dcl
 
 include $(OCAMLMAKEFILE)
