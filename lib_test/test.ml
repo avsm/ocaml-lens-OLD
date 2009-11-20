@@ -5,11 +5,9 @@ open Lwt_io
 open Printf
 
 let _ =
-  let r = with_file ~mode:input "input.txt" 
-    (fun ic ->
-      let readfn = read_into ic in
-      let e = Lens.env ~sz:3 ~readfn in
-      let s = Lens.char_stream e in
+  let r = Lens_unix.with_file "input.txt" 
+    (fun env ->
+      let s = Lens.char_stream env in
       Lwt_stream.iter (fun c -> eprintf "'%c' %d\n" c (Char.code c)) s
     ) in
   Lwt_main.run r
