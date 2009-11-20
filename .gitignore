@@ -12,3 +12,4 @@
 *.a
 *.cmxa
 /lib_test/run_test
+/parser_test/run_test
