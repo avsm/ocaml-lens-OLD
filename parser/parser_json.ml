@@ -463,3 +463,4 @@ module Parser = struct
 end
 
 let of_stream = Parser.of_stream
+let of_string s = Parser.of_stream (Lwt_stream.of_string s)
