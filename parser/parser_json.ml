@@ -1,3 +1,4 @@
+(*pp camlp4o `ocamlfind query -i-format lwt.syntax` pa_lwt.cmo *)
 (*
  * Copyright (C) 2006-2009 Citrix Systems Inc.
  * Copyright (C) 2009 Anil Madhavapeddy <anil@recoil.org>
@@ -14,6 +15,7 @@
  *)
 
 open Value
+open Lwt
 
 let rec list_iter_between f o = function
   | []   -> ()
@@ -405,28 +407,31 @@ module Parser = struct
     | Done _ -> raise_internal_error s "parse called when parse_state is 'Done'"
 
   type parse_result =
-    | Json_value of Value.t * (* number of consumed bytes *) int
+    | Json_value of Value.t 
     | Json_parse_incomplete of parse_state
 
-  let parse_substring state str ofs len =
-    let i = ref ofs in
-    let iend = ofs + len in
-    while get_parse_result state = None && !i < iend do
-      parse_char state str.[!i];
-      (* This is here instead of inside parse_char since
-         parse_char makes (tail-)recursive calls without
-         consuming a character.
-      *)
-      state.num_chars_parsed <- state.num_chars_parsed + 1;
-
-      incr i
-    done;
-    match get_parse_result state with
-      | Some v -> Json_value (v, !i - ofs)
-      | None -> Json_parse_incomplete state
+  let parse_substring state str =
+    Lwt_stream.junk_while 
+     (fun c ->
+        match get_parse_result state with
+        |None ->
+          parse_char state c;
+          (* This is here instead of inside parse_char since
+            parse_char makes (tail-)recursive calls without
+            consuming a character.
+          *)
+          state.num_chars_parsed <- state.num_chars_parsed + 1;
+          true
+        |Some _ -> false) str >>
+    return (match get_parse_result state with
+      | Some v -> Json_value v
+      | None -> Json_parse_incomplete state)
 
   let parse state str =
-    parse_substring state str 0 (String.length str)
+    try_lwt
+      parse_substring state str 
+    with Lwt_stream.Empty ->
+      return (Json_parse_incomplete state)
 
   (* This is really only required for numbers, since they are only
      terminated by whitespace, but end-of-file or end-of-connection
@@ -436,22 +441,25 @@ module Parser = struct
      start of a json value.
   *)
   let finish_parse state =
-    match parse state " " with
-    | Json_value (v, _) -> Some v
+    lwt parse_result = parse state (Lwt_stream.of_string " ") in
+    match parse_result with
+    | Json_value v -> return (Some v)
     | Json_parse_incomplete _ ->
-      if state.cursor = Start then None
+      if state.cursor = Start then return None
       else raise_unterminated_value state (current_cursor_value state.cursor)
 
   let num_chars_parsed state = state.num_chars_parsed
 
-  let of_string str =
-    match parse (init_parse_state ()) str with
-    | Json_value (v, _) -> v
+  let of_stream str =
+    lwt parse_result = parse (init_parse_state ()) str in
+    match parse_result with
+    | Json_value v -> return v
     | Json_parse_incomplete st ->
-      match finish_parse st with
-      | Some v -> v
+      lwt r = finish_parse st in
+      match r with
+      | Some v -> return v
       | None -> raise_unterminated_value st (current_cursor_value st.cursor)
       
 end
 
-let of_string = Parser.of_string
+let of_stream = Parser.of_stream
